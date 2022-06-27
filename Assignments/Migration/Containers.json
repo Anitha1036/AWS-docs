@@ -1,0 +1,12 @@
+[
+{
+  "Description" : "Ubuntu",
+  "Format" : "vmdk",
+  "UserBucket":{
+    "S3Bucket":"myexportubuntuvmbucket",
+	"S3Key":"myubuntuserver-disk001.vmdk"
+  }
+
+
+}
+]

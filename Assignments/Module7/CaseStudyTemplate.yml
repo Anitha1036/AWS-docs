@@ -1,0 +1,260 @@
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.1.0/24
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.2.0/24
+  PrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.3.0/24
+  ImageId:
+    Type: String
+    Description: 'Linux 2 AMI for N-Virginia us-east-1 Region'
+    Default: 'ami-033b95fb8079dc481'
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - m1.small
+      - m1.large
+    Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
+  KeyName:
+    Description: SSH Keypair to login to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: N-VirginiaKeyPair    
+  DomainName:
+    Type: String
+    Default: nandhinitest.ga
+  Subdomain:
+    Description: The subdomain of the dns entry. For example, hello -> hello.mydomain.com, hello is the subdomain.
+    Type: String
+
+Resources:
+    VPC:
+        Type: AWS::EC2::VPC
+        Properties:
+          CidrBlock: !Ref VpcCIDR
+          EnableDnsSupport: true
+          EnableDnsHostnames: true
+          Tags:
+            - Key: Name
+              Value: !Ref EnvironmentName
+
+    InternetGateway:
+        Type: AWS::EC2::InternetGateway
+        Properties:
+          Tags:
+            - Key: Name
+              Value: !Ref EnvironmentName
+
+    InternetGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Properties:
+          InternetGatewayId: !Ref InternetGateway
+          VpcId: !Ref VPC
+
+    PublicSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+          VpcId: !Ref VPC
+          AvailabilityZone: !Select [ 0, !GetAZs '' ]
+          CidrBlock: !Ref PublicSubnet1CIDR
+          MapPublicIpOnLaunch: true
+          Tags:
+            - Key: Name
+              Value: !Sub ${EnvironmentName} Public Subnet (AZ1)
+
+    PublicRouteTable:
+        Type: AWS::EC2::RouteTable
+        Properties:
+          VpcId: !Ref VPC
+          Tags:
+            - Key: Name
+              Value: !Sub ${EnvironmentName} Public Routes
+
+    DefaultPublicRoute:
+        Type: AWS::EC2::Route
+        DependsOn: InternetGatewayAttachment
+        Properties:
+          RouteTableId: !Ref PublicRouteTable
+          DestinationCidrBlock: 0.0.0.0/0
+          GatewayId: !Ref InternetGateway
+
+    PublicSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          RouteTableId: !Ref PublicRouteTable
+          SubnetId: !Ref PublicSubnet1	  
+    PrivateSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+          VpcId: !Ref VPC
+          AvailabilityZone: !Select [ 0, !GetAZs '' ]
+          CidrBlock: !Ref PrivateSubnet1CIDR
+          MapPublicIpOnLaunch: false
+          Tags:
+            - Key: Name
+              Value: !Sub ${EnvironmentName} Private Subnet (AZ1)
+    PrivateRouteTable1:
+        Type: AWS::EC2::RouteTable
+        Properties:
+          VpcId: !Ref VPC
+          Tags:
+            - Key: Name
+              Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+    PrivateSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          RouteTableId: !Ref PrivateRouteTable1
+          SubnetId: !Ref PrivateSubnet1
+    PrivateSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+          VpcId: !Ref VPC
+          AvailabilityZone: !Select [ 1, !GetAZs '' ]
+          CidrBlock: !Ref PrivateSubnet2CIDR
+          MapPublicIpOnLaunch: false
+          Tags:
+            - Key: Name
+              Value: !Sub ${EnvironmentName} Private Subnet (AZ1)
+    PrivateRouteTable2:
+        Type: AWS::EC2::RouteTable
+        Properties:
+          VpcId: !Ref VPC
+          Tags:
+            - Key: Name
+              Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+    PrivateSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          RouteTableId: !Ref PrivateRouteTable2
+          SubnetId: !Ref PrivateSubnet2
+          
+    WebTierInstance:
+        Type: 'AWS::EC2::Instance'
+        Properties: 
+          ImageId: !Ref ImageId
+          InstanceType: !Ref InstanceType
+          KeyName: !Ref KeyName
+          SecurityGroupIds: 
+            - !Ref HttpSSHSG
+          SubnetId: !Ref PublicSubnet1
+          UserData:
+            Fn::Base64: 
+              !Sub |
+                #!/bin/bash
+                yum update -y
+                yum install -y httpd
+                systemctl start httpd
+                systemctl enable httpd
+                echo "<h1>Hello World from $(hostname -f)</h1>" > /var/www/html/index.html
+          Tags:
+            - Key: Name
+              Value: Web
+    ApplicationTierInstance:
+        Type: 'AWS::EC2::Instance'
+        Properties: 
+          ImageId: !Ref ImageId
+          InstanceType: !Ref InstanceType
+          KeyName: !Ref KeyName
+          SecurityGroupIds: 
+            - !Ref SSHFromPublicSubnet
+          SubnetId: !Ref PrivateSubnet1
+          Tags:
+            - Key: Name
+              Value: Application    
+    HttpSSHSG:
+        Type: 'AWS::EC2::SecurityGroup'
+        Properties:
+          VpcId: !Ref VPC
+          GroupDescription: SG to allow SSH access via port 22
+          SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: '22'
+              ToPort: '22'
+              CidrIp: '0.0.0.0/0'
+            - IpProtocol: tcp
+              FromPort: 80
+              ToPort: 80
+              CidrIp: 0.0.0.0/0
+          Tags:
+            - Key: Name
+              Value: HTTP-SSH-SG
+    SSHFromPublicSubnet:
+        Type: 'AWS::EC2::SecurityGroup'
+        DependsOn: HttpSSHSG
+        Properties:
+          VpcId: !Ref VPC
+          GroupDescription: SG to allow SSH access via port 22 from public subnet
+          SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: '22'
+              ToPort: '22'
+              SourceSecurityGroupId: !GetAtt HttpSSHSG.GroupId
+          Tags:
+            - Key: Name
+              Value: SSH-SG
+    RDSDBSubnetGroup:
+        Type: "AWS::RDS::DBSubnetGroup"
+        Properties:
+            DBSubnetGroupDescription: "Subnet Group for mySQL database"
+            DBSubnetGroupName: !Sub "${AWS::Region}-aws-dxl-database-subnet-group"
+            SubnetIds: 
+              - !Ref PrivateSubnet2
+              - !Ref PrivateSubnet1
+    MySQLDBInstance:
+        Type: AWS::RDS::DBInstance      
+        Properties:
+            VPCSecurityGroups: 
+                - !Ref DBEC2SecurityGroup
+            AllocatedStorage: '5'
+            DBInstanceClass: db.t2.small
+            Engine: MySQL
+            MasterUsername: admin
+            MasterUserPassword: Admin123
+            DBSubnetGroupName: !Ref RDSDBSubnetGroup
+    DBEC2SecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        DependsOn: SSHFromPublicSubnet
+        Properties:
+            VpcId: !Ref VPC
+            GroupDescription: Open database for access
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: 3306
+                  ToPort: 3306
+                  SourceSecurityGroupId: !GetAtt SSHFromPublicSubnet.GroupId
+    Zone:
+        Type: "AWS::Route53::HostedZone"
+        Properties:
+          Name: !Ref DomainName
+          HostedZoneConfig:
+            Comment: !Join
+              - " "
+              - ["My hosted zone for", !Ref DomainName]
+    DnsRecord:
+        Type: AWS::Route53::RecordSet
+        DependsOn: Zone
+        Properties:
+          HostedZoneId: !Ref Zone
+          Comment: DNS name for my instance.
+          Name: !Join ['', [!Ref 'Subdomain', ., !Ref DomainName]]
+          Type: A
+          TTL: '30'
+          ResourceRecords:
+          - !GetAtt WebTierInstance.PublicIp
+
